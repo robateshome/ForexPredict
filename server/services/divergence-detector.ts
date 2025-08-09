@@ -101,8 +101,8 @@ export class DivergenceDetector {
             type: 'bullish',
             indicator: indicatorName,
             strength,
-            pricePoints: [priceMin1, priceMin2],
-            indicatorPoints: [indMin1, indMin2],
+            pricePoints: [{ x: priceMin1.index, y: priceMin1.value }, { x: priceMin2.index, y: priceMin2.value }],
+            indicatorPoints: [{ x: indMin1.index, y: indMin1.value }, { x: indMin2.index, y: indMin2.value }],
             description: `${indicatorName} bullish divergence: price making lower lows while ${indicatorName} shows higher lows`
           });
         }
@@ -123,8 +123,8 @@ export class DivergenceDetector {
             type: 'bearish',
             indicator: indicatorName,
             strength,
-            pricePoints: [priceMax1, priceMax2],
-            indicatorPoints: [indMax1, indMax2],
+            pricePoints: [{ x: priceMax1.index, y: priceMax1.value }, { x: priceMax2.index, y: priceMax2.value }],
+            indicatorPoints: [{ x: indMax1.index, y: indMax1.value }, { x: indMax2.index, y: indMax2.value }],
             description: `${indicatorName} bearish divergence: price making higher highs while ${indicatorName} shows lower highs`
           });
         }

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage.js";
 import { ForexService } from "./services/forex-service.js";
+import { DemoDataService } from "./services/demo-data-service.js";
 import { TradingSignal, SystemStatus, SignalUpdate, MarketUpdate } from "@shared/schema.js";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -11,8 +12,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
-  // Initialize Forex service
-  const forexService = new ForexService();
+  // Initialize services - use demo service if no API key available
+  const apiKey = process.env.FINNHUB_API_KEY;
+  let dataService: ForexService | DemoDataService;
+  
+  if (apiKey) {
+    dataService = new ForexService();
+    console.log('Using live Finnhub data service');
+  } else {
+    dataService = new DemoDataService();
+    console.log('Using demo data service - no API key provided');
+  }
   
   // Store connected clients
   const clients = new Set<WebSocket>();
@@ -27,8 +37,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }
   
-  // Set up forex service callbacks
-  forexService.setCallbacks(
+  // Set up data service callbacks
+  dataService.setCallbacks(
     (signal: TradingSignal) => {
       // Store signal (in production, would save to database)
       storage.saveSignal(signal);
@@ -67,6 +77,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       data: { status: 'connected', timestamp: new Date().toISOString() }
     }));
     
+    // Handle ping/pong for latency measurement
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        if (message.type === 'ping') {
+          ws.send(JSON.stringify({
+            type: 'pong',
+            data: { timestamp: message.timestamp }
+          }));
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    });
+    
     ws.on('close', () => {
       console.log('Client disconnected from WebSocket');
       clients.delete(ws);
@@ -99,7 +124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   app.get('/api/system-status', async (req, res) => {
     try {
-      const status = forexService.getConnectionStatus();
+      const status = dataService.getConnectionStatus();
       res.json(status);
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch system status' });
@@ -126,10 +151,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Start forex service
-  forexService.connect().catch(error => {
-    console.error('Failed to connect to Finnhub:', error);
-  });
+  // Start data service
+  if (dataService instanceof ForexService) {
+    dataService.connect().catch(error => {
+      console.error('Failed to connect to Finnhub:', error);
+    });
+  } else {
+    dataService.start();
+  }
   
   return httpServer;
 }

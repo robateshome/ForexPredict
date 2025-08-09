@@ -59,7 +59,9 @@ export class ForexService {
   async connect(): Promise<void> {
     const apiKey = process.env.FINNHUB_API_KEY;
     if (!apiKey) {
-      throw new Error('FINNHUB_API_KEY environment variable not set');
+      console.log('FINNHUB_API_KEY not set, running in demo mode with simulated data');
+      this.startDemoMode();
+      return;
     }
     
     const wsUrl = `wss://ws.finnhub.io?token=${apiKey}`;
@@ -196,7 +198,11 @@ export class ForexService {
       const completeSignal: TradingSignal = {
         id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         timestamp: new Date(),
-        ...signal
+        ...signal,
+        entryType: signal.entryType || 'market',
+        stopLoss: signal.stopLoss || null,
+        takeProfit: signal.takeProfit || null,
+        expectedMovePct: signal.expectedMovePct || null
       };
       
       this.onSignalCallback(completeSignal);
@@ -253,6 +259,32 @@ export class ForexService {
     this.isConnected = false;
   }
   
+  private startDemoMode() {
+    this.isConnected = true;
+    console.log('Starting demo mode with simulated forex data');
+    
+    // Simulate market data updates
+    setInterval(() => {
+      this.subscribedPairs.forEach(pair => {
+        const basePrice = pair === 'OANDA:EUR_USD' ? 1.23456 : 
+                         pair === 'OANDA:GBP_USD' ? 1.45789 : 156.234;
+        
+        // Add small random price movement
+        const change = (Math.random() - 0.5) * 0.0001;
+        const newPrice = basePrice + change;
+        
+        const mockTrade = {
+          s: pair,
+          p: newPrice,
+          t: Date.now(),
+          v: Math.random() * 1000
+        };
+        
+        this.processTradeData(mockTrade);
+      });
+    }, 3000); // Update every 3 seconds in demo mode
+  }
+
   getConnectionStatus() {
     return {
       connected: this.isConnected,

@@ -40,7 +40,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             const start = Date.now();
             ws.current.send(JSON.stringify({ type: 'ping', timestamp: start }));
           }
-        }, 5000);
+        }, 30000);
       };
 
       ws.current.onmessage = (event) => {
@@ -82,9 +82,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           pingInterval.current = null;
         }
 
-        // Attempt reconnection
+        // Attempt reconnection with longer delay
         if (reconnectAttempts.current < maxReconnectAttempts) {
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+          const delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts.current), 10000);
           reconnectAttempts.current++;
           
           reconnectTimeout.current = setTimeout(() => {
