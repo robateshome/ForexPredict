@@ -12,20 +12,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
-  // Initialize services - use demo service for stable development
-  const apiKey = process.env.FINNHUB_API_KEY;
+  // Initialize services - choose between demo and live ExchangeRate-API
   let dataService: ForexService | DemoDataService;
   
-  // Force demo mode for stable WebSocket connections during development
+  // Use demo mode in development for stable testing, live mode in production
   if (process.env.NODE_ENV === 'development') {
     dataService = new DemoDataService();
     console.log('Using demo data service for stable development experience');
-  } else if (apiKey) {
-    dataService = new ForexService();
-    console.log('Using live Finnhub data service');
   } else {
-    dataService = new DemoDataService();
-    console.log('Using demo data service - no API key provided');
+    dataService = new ForexService();
+    console.log('Using live ExchangeRate-API service');
   }
   
   // Store connected clients

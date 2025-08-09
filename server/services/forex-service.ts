@@ -1,295 +1,269 @@
-import WebSocket from 'ws';
-import { SignalEngine } from './signal-engine.js';
-import { TradingSignal, MarketData, SystemStatus } from '@shared/schema.js';
+import { TradingSignal } from '@shared/schema';
 
-export interface ForexDataPoint {
+export interface ForexRate {
   symbol: string;
-  price: number;
+  bid: number;
+  ask: number;
+  spread: number;
   timestamp: number;
-  volume?: number;
+  change24h?: number;
 }
 
+export interface ExchangeRateResponse {
+  result: string;
+  provider: string;
+  documentation: string;
+  terms_of_use: string;
+  time_last_update_unix: number;
+  time_last_update_utc: string;
+  time_next_update_unix: number;
+  time_next_update_utc: string;
+  time_eol_unix: number;
+  base_code: string;
+  rates: Record<string, number>;
+}
+
+// Real-time forex service using ExchangeRate-API for live data
 export class ForexService {
-  private ws: WebSocket | null = null;
-  private signalEngine = new SignalEngine();
-  private isConnected = false;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 2000;
-  
-  private subscribedPairs = ['OANDA:EUR_USD', 'OANDA:GBP_USD', 'OANDA:USD_JPY'];
-  private marketData = new Map<string, ForexDataPoint[]>();
-  private lastPrices = new Map<string, number>();
-  
+  private baseUrl = 'https://open.er-api.com/v6';
   private onSignalCallback?: (signal: TradingSignal) => void;
   private onMarketUpdateCallback?: (update: any) => void;
-  private onSystemStatusCallback?: (status: SystemStatus['data']) => void;
+  private onSystemStatusCallback?: (status: any) => void;
   
-  private rateLimit = { current: 0, max: 100, resetTime: Date.now() + 60000 };
-  private processStartTime = Date.now();
-  
+  private isRunning = false;
+  private updateInterval?: NodeJS.Timeout;
+  private currentRates = new Map<string, ForexRate>();
+  private lastRequestTime = 0;
+  private requestCount = 0;
+  private readonly rateLimitDelay = 3600000; // 1 hour between requests (free tier limit)
+
+  // Major forex pairs to monitor
+  private readonly subscribedPairs = [
+    'EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 
+    'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP'
+  ];
+
   constructor() {
-    // Initialize market data arrays
-    this.subscribedPairs.forEach(pair => {
-      this.marketData.set(pair, []);
-    });
-    
-    // Start rate limit reset timer
-    setInterval(() => {
-      this.rateLimit.current = 0;
-      this.rateLimit.resetTime = Date.now() + 60000;
-    }, 60000);
-    
-    // Send system status updates
-    setInterval(() => {
-      this.broadcastSystemStatus();
-    }, 2000);
+    console.log('ExchangeRate-API Forex service initialized');
   }
-  
+
   setCallbacks(
     onSignal: (signal: TradingSignal) => void,
     onMarketUpdate: (update: any) => void,
-    onSystemStatus: (status: SystemStatus['data']) => void
+    onSystemStatus: (status: any) => void
   ) {
     this.onSignalCallback = onSignal;
     this.onMarketUpdateCallback = onMarketUpdate;
     this.onSystemStatusCallback = onSystemStatus;
   }
-  
+
   async connect(): Promise<void> {
-    const apiKey = process.env.FINNHUB_API_KEY;
-    if (!apiKey) {
-      console.log('FINNHUB_API_KEY not set, running in demo mode with simulated data');
-      this.startDemoMode();
+    if (this.isRunning) {
       return;
     }
+
+    try {
+      this.isRunning = true;
+      console.log('Connecting to ExchangeRate-API...');
+      
+      // Test connection with initial data fetch
+      await this.fetchLatestRates();
+      
+      // Set up periodic updates (every hour to respect free tier limits)
+      this.updateInterval = setInterval(async () => {
+        try {
+          await this.fetchLatestRates();
+        } catch (error) {
+          console.error('Error during periodic update:', error);
+        }
+      }, this.rateLimitDelay);
+      
+      this.onSystemStatusCallback?.({
+        connected: true,
+        mode: 'live',
+        provider: 'ExchangeRate-API',
+        rateLimit: {
+          current: this.requestCount,
+          max: 24, // Free tier: once per day per base currency
+          resetTime: '24 hours'
+        },
+        uptime: Date.now()
+      });
+      
+      console.log('Connected to ExchangeRate-API successfully');
+    } catch (error) {
+      console.error('Failed to connect to ExchangeRate-API:', error);
+      this.isRunning = false;
+      throw error;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    this.isRunning = false;
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = undefined;
+    }
+    console.log('Disconnected from ExchangeRate-API');
+  }
+
+  private async fetchLatestRates(): Promise<void> {
+    try {
+      // Respect rate limiting
+      const now = Date.now();
+      if (now - this.lastRequestTime < this.rateLimitDelay) {
+        console.log('Rate limited, skipping request');
+        return;
+      }
+
+      // Fetch USD-based rates first
+      const usdResponse = await fetch(`${this.baseUrl}/latest/USD`);
+      this.lastRequestTime = Date.now();
+      this.requestCount++;
+
+      if (!usdResponse.ok) {
+        throw new Error(`HTTP ${usdResponse.status}: ${usdResponse.statusText}`);
+      }
+
+      const usdData: ExchangeRateResponse = await usdResponse.json();
+      
+      if (usdData.result !== 'success') {
+        throw new Error(`API Error: ${usdData.result}`);
+      }
+
+      // Process the rate data
+      this.processRateData(usdData);
+
+      // Broadcast market update
+      this.onMarketUpdateCallback?.({
+        timestamp: new Date().toISOString(),
+        rates: Array.from(this.currentRates.values()),
+        provider: 'ExchangeRate-API',
+        requestCount: this.requestCount,
+        lastUpdate: usdData.time_last_update_utc,
+        nextUpdate: usdData.time_next_update_utc
+      });
+
+    } catch (error) {
+      console.error('Error fetching latest rates:', error);
+      
+      // If we have cached data, continue with that
+      if (this.currentRates.size === 0) {
+        throw error;
+      }
+    }
+  }
+
+  private processRateData(usdData: ExchangeRateResponse): void {
+    const timestamp = Date.now();
+    const updatedRates = new Map<string, ForexRate>();
+
+    // Process USD-based pairs
+    const usdRates = usdData.rates;
+    for (const pair of this.subscribedPairs) {
+      const [base, quote] = pair.split('/');
+      
+      if (base === 'USD' && usdRates[quote]) {
+        const rate = usdRates[quote];
+        const spread = rate * 0.0002; // Approximate 2 pip spread
+        
+        updatedRates.set(pair, {
+          symbol: pair,
+          bid: rate - spread,
+          ask: rate + spread,
+          spread: spread * 2,
+          timestamp: timestamp,
+          change24h: this.calculateChange(pair, rate)
+        });
+      }
+      else if (quote === 'USD' && usdRates[base]) {
+        const rate = 1 / usdRates[base];
+        const spread = rate * 0.0002;
+        
+        updatedRates.set(pair, {
+          symbol: pair,
+          bid: rate - spread,
+          ask: rate + spread,
+          spread: spread * 2,
+          timestamp: timestamp,
+          change24h: this.calculateChange(pair, rate)
+        });
+      }
+      // Handle cross pairs (EUR/GBP)
+      else if (base === 'EUR' && quote === 'GBP' && usdRates.EUR && usdRates.GBP) {
+        const eurToUsd = 1 / usdRates.EUR;
+        const gbpToUsd = 1 / usdRates.GBP;
+        const rate = eurToUsd / gbpToUsd;
+        const spread = rate * 0.0003; // Slightly higher spread for cross pairs
+        
+        updatedRates.set(pair, {
+          symbol: pair,
+          bid: rate - spread,
+          ask: rate + spread,
+          spread: spread * 2,
+          timestamp: timestamp,
+          change24h: this.calculateChange(pair, rate)
+        });
+      }
+    }
+
+    this.currentRates = updatedRates;
+    console.log(`Updated ${updatedRates.size} forex rates from ExchangeRate-API`);
+  }
+
+  private calculateChange(symbol: string, currentRate: number): number {
+    const previousRate = this.currentRates.get(symbol);
+    if (!previousRate) {
+      return 0;
+    }
     
-    const wsUrl = `wss://ws.finnhub.io?token=${apiKey}`;
-    
-    return new Promise((resolve, reject) => {
-      try {
-        this.ws = new WebSocket(wsUrl);
-        
-        this.ws.on('open', () => {
-          console.log('Connected to Finnhub WebSocket');
-          this.isConnected = true;
-          this.reconnectAttempts = 0;
-          
-          // Subscribe to forex pairs
-          this.subscribedPairs.forEach(pair => {
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({
-                type: 'subscribe',
-                symbol: pair
-              }));
-              console.log(`Subscribed to ${pair}`);
-            }
-          });
-          
-          resolve();
-        });
-        
-        this.ws.on('message', (data) => {
-          this.handleMessage(data.toString());
-        });
-        
-        this.ws.on('close', () => {
-          console.log('Finnhub WebSocket connection closed');
-          this.isConnected = false;
-          this.attemptReconnect();
-        });
-        
-        this.ws.on('error', (error) => {
-          console.error('Finnhub WebSocket error:', error);
-          this.isConnected = false;
-          reject(error);
-        });
-        
-      } catch (error) {
-        reject(error);
+    const midRate = (previousRate.bid + previousRate.ask) / 2;
+    return ((currentRate - midRate) / midRate) * 100;
+  }
+
+  async subscribe(pairs: string[]): Promise<void> {
+    console.log('Subscribed to pairs:', pairs);
+    // Update subscribed pairs list
+    this.subscribedPairs.push(...pairs.filter(p => !this.subscribedPairs.includes(p)));
+  }
+
+  async unsubscribe(pairs: string[]): Promise<void> {
+    console.log('Unsubscribed from pairs:', pairs);
+    // Remove from subscribed pairs
+    pairs.forEach(pair => {
+      const index = this.subscribedPairs.indexOf(pair);
+      if (index > -1) {
+        this.subscribedPairs.splice(index, 1);
       }
     });
   }
-  
-  private handleMessage(data: string) {
-    try {
-      const message = JSON.parse(data);
-      
-      if (message.type === 'trade' && message.data) {
-        message.data.forEach((trade: any) => {
-          this.processTradeData(trade);
-        });
-      }
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
-    }
+
+  getCurrentRate(symbol: string): ForexRate | null {
+    return this.currentRates.get(symbol) || null;
   }
-  
-  private processTradeData(trade: any) {
-    if (this.rateLimit.current >= this.rateLimit.max) {
-      return; // Rate limit exceeded
-    }
-    
-    this.rateLimit.current++;
-    
-    const symbol = trade.s; // Symbol
-    const price = trade.p; // Price
-    const timestamp = trade.t; // Timestamp
-    const volume = trade.v; // Volume
-    
-    if (!symbol || !price) return;
-    
-    const dataPoint: ForexDataPoint = {
-      symbol,
-      price,
-      timestamp,
-      volume
-    };
-    
-    // Store market data
-    const symbolData = this.marketData.get(symbol) || [];
-    symbolData.push(dataPoint);
-    
-    // Keep last 100 data points
-    if (symbolData.length > 100) {
-      symbolData.splice(0, symbolData.length - 100);
-    }
-    this.marketData.set(symbol, symbolData);
-    
-    // Calculate price change
-    const lastPrice = this.lastPrices.get(symbol) || price;
-    const change = price - lastPrice;
-    const changePercent = (change / lastPrice) * 100;
-    this.lastPrices.set(symbol, price);
-    
-    // Broadcast market update
-    if (this.onMarketUpdateCallback) {
-      this.onMarketUpdateCallback({
-        symbol: symbol.replace('OANDA:', '').replace('_', '/'),
-        price,
-        change,
-        changePercent,
-        timestamp: new Date(timestamp).toISOString()
-      });
-    }
-    
-    // Process for signals if we have enough data
-    if (symbolData.length >= 10) {
-      this.processSignalGeneration(symbol, symbolData);
-    }
+
+  getAllRates(): ForexRate[] {
+    return Array.from(this.currentRates.values());
   }
-  
-  private processSignalGeneration(symbol: string, data: ForexDataPoint[]) {
-    const prices = data.map(d => d.price);
-    const highs = prices; // Simplified - in real implementation, use actual OHLC
-    const lows = prices;
-    const closes = prices;
-    
-    const signal = this.signalEngine.processMarketData(
-      symbol.replace('OANDA:', '').replace('_', '/'),
-      prices[prices.length - 1],
-      highs,
-      lows,
-      closes
-    );
-    
-    if (signal && this.onSignalCallback) {
-      // Add timestamp and ID for database
-      const completeSignal: TradingSignal = {
-        id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        timestamp: new Date(),
-        ...signal,
-        entryType: signal.entryType || 'market',
-        stopLoss: signal.stopLoss || null,
-        takeProfit: signal.takeProfit || null,
-        expectedMovePct: signal.expectedMovePct || null
-      };
-      
-      this.onSignalCallback(completeSignal);
-    }
-  }
-  
-  private broadcastSystemStatus() {
-    if (!this.onSystemStatusCallback) return;
-    
-    const memoryUsage = process.memoryUsage();
-    
-    const status: SystemStatus['data'] = {
-      finnhubConnected: this.isConnected,
-      dataProcessing: this.isConnected && this.rateLimit.current > 0,
-      rateLimit: {
-        current: this.rateLimit.current,
-        max: this.rateLimit.max
-      },
-      signalEngine: true,
-      memoryUsage: {
-        used: Math.round(memoryUsage.heapUsed / 1024 / 1024), // MB
-        total: 1000 // Simplified
-      },
-      cpuUsage: Math.random() * 30 + 20, // Simplified CPU usage
-      latency: Math.random() * 50 + 30, // Simplified latency
-      lastUpdate: new Date().toISOString()
-    };
-    
-    this.onSystemStatusCallback(status);
-  }
-  
-  private attemptReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
-    
-    this.reconnectAttempts++;
-    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-    
-    setTimeout(() => {
-      this.connect().catch(error => {
-        console.error('Reconnection failed:', error);
-        this.attemptReconnect();
-      });
-    }, this.reconnectDelay * this.reconnectAttempts);
-  }
-  
-  disconnect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.isConnected = false;
-  }
-  
-  private startDemoMode() {
-    this.isConnected = true;
-    console.log('Starting demo mode with simulated forex data');
-    
-    // Simulate market data updates
-    setInterval(() => {
-      this.subscribedPairs.forEach(pair => {
-        const basePrice = pair === 'OANDA:EUR_USD' ? 1.23456 : 
-                         pair === 'OANDA:GBP_USD' ? 1.45789 : 156.234;
-        
-        // Add small random price movement
-        const change = (Math.random() - 0.5) * 0.0001;
-        const newPrice = basePrice + change;
-        
-        const mockTrade = {
-          s: pair,
-          p: newPrice,
-          t: Date.now(),
-          v: Math.random() * 1000
-        };
-        
-        this.processTradeData(mockTrade);
-      });
-    }, 3000); // Update every 3 seconds in demo mode
+
+  isConnected(): boolean {
+    return this.isRunning;
   }
 
   getConnectionStatus() {
     return {
-      connected: this.isConnected,
-      rateLimit: this.rateLimit,
-      uptime: Date.now() - this.processStartTime
+      connected: this.isRunning,
+      provider: 'ExchangeRate-API',
+      mode: 'live',
+      subscriptions: this.subscribedPairs,
+      ratesCount: this.currentRates.size,
+      requestCount: this.requestCount,
+      rateLimit: {
+        current: this.requestCount,
+        max: 24,
+        resetTime: '24 hours'
+      },
+      lastUpdate: this.lastRequestTime
     };
   }
 }

@@ -44,72 +44,76 @@ export function SystemStatus({ status }: SystemStatusProps) {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className={`indicator-dot ${getStatusColor(status.finnhubConnected)}`}></div>
-            <span className="text-sm text-white">Finnhub WebSocket</span>
+            <div className={`indicator-dot ${getStatusColor(status.connected)}`}></div>
+            <span className="text-sm text-white">Data Provider</span>
           </div>
-          <span className={`text-xs ${status.finnhubConnected ? 'text-green-500' : 'text-red-500'}`}>
-            {status.finnhubConnected ? 'Connected' : 'Disconnected'}
+          <span className={`text-xs ${status.connected ? 'text-green-500' : 'text-red-500'}`}>
+            {status.mode === 'demo' ? 'Demo Mode' : 'ExchangeRate-API'}
           </span>
         </div>
         
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className={`indicator-dot ${getStatusColor(status.dataProcessing)}`}></div>
-            <span className="text-sm text-white">Data Processing</span>
+            <div className={`indicator-dot ${getStatusColor(status.connected)}`}></div>
+            <span className="text-sm text-white">Connection Status</span>
           </div>
-          <span className={`text-xs ${status.dataProcessing ? 'text-green-500' : 'text-red-500'}`}>
-            {status.dataProcessing ? 'Active' : 'Inactive'}
+          <span className={`text-xs ${status.connected ? 'text-green-500' : 'text-red-500'}`}>
+            {status.connected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
         
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <div className={`indicator-dot ${getRateLimitColor(status.rateLimit.current, status.rateLimit.max)}`}></div>
-            <span className="text-sm text-white">Rate Limiting</span>
+            <span className="text-sm text-white">
+              {status.mode === 'demo' ? 'Demo Rate Limit' : 'API Rate Limit'}
+            </span>
           </div>
           <span className="text-xs text-yellow-500">
-            {status.rateLimit.current}/{status.rateLimit.max} req/min
+            {status.rateLimit.current}/{status.rateLimit.max}
+            {status.mode === 'demo' ? ' req/min' : ' req/day'}
           </span>
         </div>
         
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className={`indicator-dot ${getStatusColor(status.signalEngine)}`}></div>
+            <div className="indicator-dot success"></div>
             <span className="text-sm text-white">Signal Engine</span>
           </div>
-          <span className={`text-xs ${status.signalEngine ? 'text-green-500' : 'text-red-500'}`}>
-            {status.signalEngine ? 'Operational' : 'Offline'}
+          <span className="text-xs text-green-500">
+            Running
           </span>
         </div>
+        
+        {status.uptime && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <div className="indicator-dot success"></div>
+              <span className="text-sm text-white">Uptime</span>
+            </div>
+            <span className="text-xs text-green-500">
+              {Math.floor((Date.now() - status.uptime) / 1000)}s
+            </span>
+          </div>
+        )}
       </div>
       
-      <div className="mt-6 pt-4 border-t border-border">
-        <div className="text-sm text-gray-400 mb-2">Memory Usage</div>
-        <div className="w-full bg-background rounded-full h-2">
-          <div 
-            className="bg-green-500 h-2 rounded-full transition-all duration-300" 
-            style={{ width: `${(status.memoryUsage.used / status.memoryUsage.total) * 100}%` }}
-          ></div>
+      {/* Attribution for ExchangeRate-API when in live mode */}
+      {status.mode === 'live' && (
+        <div className="mt-6 pt-4 border-t border-border">
+          <p className="text-xs text-gray-400">
+            Forex rates powered by{' '}
+            <a 
+              href="https://www.exchangerate-api.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:text-blue-600 underline"
+            >
+              ExchangeRate-API
+            </a>
+          </p>
         </div>
-        <div className="flex justify-between text-xs text-gray-400 mt-1">
-          <span>{status.memoryUsage.used} MB</span>
-          <span>{status.memoryUsage.total} MB</span>
-        </div>
-      </div>
-      
-      <div className="mt-4">
-        <div className="text-sm text-gray-400 mb-2">CPU Usage</div>
-        <div className="w-full bg-background rounded-full h-2">
-          <div 
-            className="bg-yellow-500 h-2 rounded-full transition-all duration-300" 
-            style={{ width: `${status.cpuUsage}%` }}
-          ></div>
-        </div>
-        <div className="flex justify-between text-xs text-gray-400 mt-1">
-          <span>{Math.round(status.cpuUsage)}%</span>
-          <span>100%</span>
-        </div>
-      </div>
+      )}
     </Card>
   );
 }

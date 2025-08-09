@@ -38,9 +38,9 @@ Preferred communication style: Simple, everyday language.
 ## External Dependencies
 
 ### Market Data Provider
-- **Finnhub API**: Primary data source for real-time forex WebSocket feeds and historical data
-- **Rate Limiting**: Built-in request limiting to comply with API constraints
-- **Failover Strategy**: Connection monitoring with automatic reconnection attempts
+- **ExchangeRate-API**: Primary data source for real-time forex exchange rates with free tier access
+- **Rate Limiting**: Hourly request limiting to comply with free tier constraints (24 requests/day)
+- **Fallback Strategy**: Demo data service for development and testing environments
 
 ### Database Services
 - **Neon Database**: Serverless PostgreSQL for production data storage

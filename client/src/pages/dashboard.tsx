@@ -31,14 +31,19 @@ export default function Dashboard() {
     { symbol: 'USD/JPY', price: 156.234, change: 0.25, changePercent: 0.25, isActive: true },
   ]);
   const [systemStatus, setSystemStatus] = useState<SystemStatusType['data']>({
+    connected: true,
+    mode: 'demo',
+    provider: 'Demo',
+    rateLimit: { current: 0, max: 100 },
+    uptime: Date.now(),
+    latency: 45,
+    lastUpdate: new Date().toISOString(),
+    // Legacy fields for backward compatibility
     finnhubConnected: false,
     dataProcessing: false,
-    rateLimit: { current: 0, max: 100 },
     signalEngine: false,
     memoryUsage: { used: 650, total: 1000 },
-    cpuUsage: 45,
-    latency: 45,
-    lastUpdate: new Date().toISOString()
+    cpuUsage: 45
   });
   
   const [indicators, setIndicators] = useState({
@@ -73,9 +78,11 @@ export default function Dashboard() {
   useEffect(() => {
     setSystemStatus(prev => ({
       ...prev,
-      finnhubConnected: isConnected,
+      connected: isConnected,
       latency: latency,
-      lastUpdate: new Date().toISOString()
+      lastUpdate: new Date().toISOString(),
+      // Legacy fields for backward compatibility
+      finnhubConnected: isConnected
     }));
   }, [isConnected, latency]);
 

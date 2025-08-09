@@ -129,13 +129,22 @@ export interface MarketUpdate extends WSMessage {
 export interface SystemStatus extends WSMessage {
   type: 'system_status';
   data: {
-    finnhubConnected: boolean;
-    dataProcessing: boolean;
-    rateLimit: { current: number; max: number; };
-    signalEngine: boolean;
-    memoryUsage: { used: number; total: number; };
-    cpuUsage: number;
-    latency: number;
-    lastUpdate: string;
+    connected: boolean;
+    mode?: string; // 'demo' or 'live'
+    provider?: string; // 'ExchangeRate-API' or 'Demo'
+    rateLimit: { 
+      current: number; 
+      max: number; 
+      resetTime?: string;
+    };
+    uptime?: number;
+    latency?: number;
+    lastUpdate?: string;
+    // Legacy fields for backward compatibility
+    finnhubConnected?: boolean;
+    dataProcessing?: boolean;
+    signalEngine?: boolean;
+    memoryUsage?: { used: number; total: number; };
+    cpuUsage?: number;
   };
 }
