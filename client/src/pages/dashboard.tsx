@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
-import { ChartLine, Signal, Percent, Zap, Trophy, Settings } from "lucide-react";
+import { ChartLine, Signal, Percent, Zap, Trophy, Settings, RefreshCw } from "lucide-react";
 import { StatsCard } from "@/components/stats-card";
 import { SignalCard } from "@/components/signal-card";
 import { DivergenceAnalysis } from "@/components/divergence-analysis";
 import { IndicatorStatus } from "@/components/indicator-status";
 import { SystemStatus } from "@/components/system-status";
 import { BacktestingPanel } from "@/components/backtesting-panel";
-import { useWebSocketMinimal } from "@/hooks/use-websocket-minimal";
-import { TradingSignal, SystemStatus as SystemStatusType, MarketUpdate } from "@shared/schema";
+import { PriceCard } from "@/components/price-card";
+import { useRealtimePrice } from "@/hooks/use-realtime-price";
+import { TradingSignal, SystemStatus as SystemStatusType } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,21 +16,16 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
-interface MarketPair {
-  symbol: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  isActive: boolean;
-}
-
 export default function Dashboard() {
   const [signals, setSignals] = useState<TradingSignal[]>([]);
-  const [marketPairs, setMarketPairs] = useState<MarketPair[]>([
-    { symbol: 'EUR/USD', price: 1.23456, change: 0.0008, changePercent: 0.08, isActive: true },
-    { symbol: 'GBP/USD', price: 1.45789, change: -0.0012, changePercent: -0.12, isActive: true },
-    { symbol: 'USD/JPY', price: 156.234, change: 0.25, changePercent: 0.25, isActive: true },
-  ]);
+  const [previousPrices, setPreviousPrices] = useState<Record<string, any>>({});
+  
+  // Real-time price data with polling
+  const { prices, isLoading: pricesLoading, error: priceError, isConnected: pricesConnected, refetch } = useRealtimePrice({
+    symbols: ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF', 'USD/CAD'],
+    updateInterval: 3000, // 3 second updates
+    debounceMs: 200
+  });
   const [systemStatus, setSystemStatus] = useState<SystemStatusType['data']>({
     connected: true,
     mode: 'demo',
@@ -58,35 +54,37 @@ export default function Dashboard() {
   const [timeframe, setTimeframe] = useState("1m");
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const { isConnected } = useWebSocketMinimal({
-    onSignalUpdate: (signal: TradingSignal) => {
-      setSignals(prev => [signal, ...prev.slice(0, 49)]); // Keep last 50 signals
-    },
-    onMarketUpdate: (market: MarketUpdate['data']) => {
-      setMarketPairs(prev => prev.map(pair => 
-        pair.symbol === market.symbol 
-          ? { ...pair, price: market.price, change: market.change, changePercent: market.changePercent }
-          : pair
-      ));
-    },
-    onSystemStatus: (status: SystemStatusType['data']) => {
-      setSystemStatus(status);
+  // Update previous prices for animations
+  useEffect(() => {
+    if (Object.keys(prices).length > 0) {
+      setPreviousPrices(prev => {
+        const updated = { ...prev };
+        Object.keys(prices).forEach(symbol => {
+          if (!updated[symbol]) {
+            updated[symbol] = prices[symbol];
+          } else {
+            updated[symbol] = { ...updated[symbol], price: updated[symbol].price };
+          }
+        });
+        return updated;
+      });
     }
-  });
+  }, [prices]);
 
   // Update connection status display
   useEffect(() => {
     setSystemStatus(prev => ({
       ...prev,
-      connected: isConnected,
+      connected: pricesConnected,
       lastUpdate: new Date().toISOString(),
       latency: prev.latency || 45,
       // Legacy fields for backward compatibility
-      finnhubConnected: isConnected
+      finnhubConnected: pricesConnected
     }));
-  }, [isConnected]);
+  }, [pricesConnected]);
 
-  // Calculate stats from signals
+  // Calculate stats from signals and prices
+  const activePairs = Object.keys(prices).length;
   const stats = {
     activeSignals: signals.filter(s => s.signal !== 'HOLD').length,
     avgConfidence: signals.length > 0 ? 
@@ -111,20 +109,33 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center space-x-2 text-sm">
               <div className="flex items-center space-x-1">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse-success' : 'bg-red-500'}`}></div>
-                <span className={isConnected ? 'text-green-500' : 'text-red-500'}>
-                  {isConnected ? 'Connected' : 'Disconnected'}
+                <div className={`w-2 h-2 rounded-full ${pricesConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                <span className={pricesConnected ? 'text-green-500' : 'text-red-500'}>
+                  {pricesConnected ? 'Live Data' : 'Disconnected'}
                 </span>
               </div>
+              <span className="text-gray-400">•</span>
+              <span className="text-gray-400">{activePairs} Pairs Active</span>
               <span className="text-gray-400">•</span>
               <span className="text-gray-400">Latency: {systemStatus.latency || 45}ms</span>
             </div>
           </div>
           
           <div className="flex items-center space-x-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-gray-400 hover:text-white"
+              onClick={refetch}
+              disabled={pricesLoading}
+            >
+              <RefreshCw size={16} className={pricesLoading ? 'animate-spin' : ''} />
+            </Button>
             <div className="text-sm text-right">
               <div className="text-white font-medium">Research Mode</div>
-              <div className="text-gray-400 text-xs">No live trading</div>
+              <div className="text-gray-400 text-xs">
+                {priceError ? 'Connection Error' : 'No live trading'}
+              </div>
             </div>
             <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white">
               <Settings size={18} />
@@ -147,11 +158,53 @@ export default function Dashboard() {
         <aside className="w-80 bg-card border-r border-border p-6 overflow-y-auto">
           <div className="space-y-6">
             
-            {/* Currency Pairs */}
+            {/* Real-time Currency Prices */}
             <div>
-              <h3 className="text-sm font-semibold text-white mb-3">Active Pairs</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white">Live Forex Rates</h3>
+                {pricesLoading && (
+                  <RefreshCw size={14} className="animate-spin text-blue-400" />
+                )}
+              </div>
+              
+              {priceError && (
+                <div className="mb-3 p-2 bg-red-900/30 border border-red-500/30 rounded text-xs text-red-400">
+                  Connection Error: {priceError}
+                </div>
+              )}
+              
+              <div className="space-y-3">
+                {Object.values(prices).length > 0 ? (
+                  Object.values(prices).map((priceData) => (
+                    <PriceCard
+                      key={priceData.symbol}
+                      data={priceData}
+                      previousData={previousPrices[priceData.symbol]}
+                      isConnected={pricesConnected}
+                      className="w-full"
+                    />
+                  ))
+                ) : pricesLoading ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="animate-pulse">
+                        <div className="h-20 bg-gray-700 rounded"></div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-400 text-sm py-4">
+                    No price data available
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Legacy Market Pairs for backward compatibility */}
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-3">Quick Overview</h3>
               <div className="space-y-2">
-                {marketPairs.map((pair) => (
+                {Object.values(prices).slice(0, 3).map((pair) => (
                   <div key={pair.symbol} className="flex items-center justify-between p-3 bg-background rounded-lg hover:bg-gray-700 transition-colors cursor-pointer border border-transparent hover:border-green-500/30">
                     <div>
                       <div className="font-medium text-white">{pair.symbol}</div>
@@ -263,9 +316,9 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-lg font-semibold text-white">Real-time Signals</h2>
                   <div className="flex items-center space-x-2">
-                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse-success' : 'bg-red-500'}`}></div>
-                    <span className={`text-xs ${isConnected ? 'text-green-500' : 'text-red-500'}`}>
-                      {isConnected ? 'Live' : 'Offline'}
+                    <div className={`w-2 h-2 rounded-full ${pricesConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                    <span className={`text-xs ${pricesConnected ? 'text-green-500' : 'text-red-500'}`}>
+                      {pricesConnected ? 'Live' : 'Offline'}
                     </span>
                   </div>
                 </div>
