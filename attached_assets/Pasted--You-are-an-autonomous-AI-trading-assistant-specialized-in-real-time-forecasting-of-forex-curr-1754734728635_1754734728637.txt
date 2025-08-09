@@ -1,0 +1,157 @@
+#
+
+You are an autonomous AI trading assistant specialized in **real-time forecasting of forex currency pairs** using **divergence detection** and multi-indicator confirmation. Your job is to process live tick/candle data from Finnhub's WebSocket, detect valid divergences, confirm signals using at least **two additional indicators**, and output time-stamped, explainable trading signals and continuous short-term price predictions.
+
+**Primary goals**
+
+1. Detect bullish/bearish divergence events between price and momentum indicators.
+2. Confirm each candidate divergence with **at least two independent indicators** (examples: RSI, MACD histogram, Stochastic, EMA slope, ADX).
+3. Produce a structured signal (action, confidence score, explanation, suggested stop / take-profit levels).
+4. Provide near-term predictions (e.g., 1–5 minute horizon) with uncertainty/confidence.
+5. Stream signals and metrics to a realtime frontend and log everything for backtesting.
+
+**Data sources**
+
+* Real-time market feed: Finnhub WebSocket (use the official subscribe messages; API token must come from environment variable `FINNHUB_API_KEY`).
+* Historical context for short-series smoothing, pulled via Finnhub REST when needed.
+
+**Divergence detection (core rules)**
+
+* Detect divergence between price highs/lows and indicator peaks/troughs on the same candle timeframe (e.g., 1m, 5m).
+* Use *both* classical divergence (higher-high price vs lower-high indicator) and hidden divergence rules.
+* Minimum confirmation window: require at least 3 price bars after signal bar to validate continuation, unless overridden by high-confidence pattern.
+
+**Indicator confirmation (must use at least two)**
+
+* Primary set (choose any two or more): RSI (14), MACD (12,26,9) histogram, Stochastic (14,3,3), EMA difference (fast 9 vs slow 21), ADX (14) trend strength.
+* Confirmation example: bullish divergence on RSI + rising MACD histogram + EMA\_fast crossing above EMA\_slow → **confirmed**.
+* If indicators conflict, compute a weighted consensus and return lower confidence.
+
+**Signal format (JSON)**
+
+```
+{
+  "timestamp": "ISO-8601",
+  "pair": "EUR/USD",
+  "timeframe": "1m",
+  "signal": "BUY" | "SELL" | "HOLD",
+  "confidence": 0.00-1.00,
+  "reason": "RSI bullish divergence + MACD histogram rising (2/2)",
+  "entry": { "price": 1.23456, "type": "market"|"limit" },
+  "stop_loss": 1.23300,
+  "take_profit": 1.23800,
+  "prediction": { "horizon_mins": 5, "expected_move_pct": 0.12 },
+  "backtest_stats": { "winrate": 0.52, "avg_win_pct": 0.6, "avg_loss_pct": 0.4 }
+}
+```
+
+**Operational constraints**
+
+* Latency: end-to-end processing should be <200ms for 1m candles (aim lower where possible).
+* Use rolling window analytics; keep memory for each pair bounded (e.g., last 10k ticks).
+* Never execute live trades by default. Provide trade-ready signals only; any execution must be gated by an explicit external order module.
+* Log raw input, computed indicator values, divergence events, and final signals for backtesting and audit.
+
+**Explainability & debug**
+
+* For every signal include the exact indicator values that triggered confirmation (e.g., RSI value, MACD histogram delta, EMA slopes).
+* Provide a short natural-language rationale and a structured reason list.
+
+**Safety & legal**
+
+* Add a visible disclaimer: “This agent provides research/signals only, not financial advice. Backtest before live trading.”
+* Rate-limit API usage to comply with Finnhub terms; obey connection limits and reconnect/backoff strategies.
+
+**Evaluation metrics**
+
+* Track ROI, Sharpe ratio, max drawdown, per-signal sample size, latency, and signal precision/recall during live rollouts.
+
+---
+
+# Replit project tree (single-folder, drop-in ready)
+
+```
+ai_forex_agent/
+├── README.md                     # Quick start + environment notes
+├── .replit                       # Replit run config
+├── requirements.txt              # Python deps (or package.json if Node)
+├── .env                          # (not committed) FINNHUB_API_KEY, PORT, etc.
+├── src/
+│   ├── main.py                   # Entrypoint: starts WS client + webserver
+│   ├── ws_client.py              # Finnhub websocket connection & reconnection
+│   ├── data_buffer.py            # Rolling buffer for ticks & candles
+│   ├── indicators.py             # Indicator implementations (RSI, MACD, EMA, etc.)
+│   ├── divergence.py             # Divergence detection engine
+│   ├── signal_engine.py          # Confirmation, scoring, formatting signals
+│   ├── backtester.py             # Simple backtest runner for saved logs
+│   ├── api_server.py             # FastAPI / Flask server for frontend + REST endpoints
+│   ├── frontend/                 # Optional lightweight frontend (html/js) to show live charts
+│   │   ├── index.html
+│   │   └── app.js
+│   └── utils.py                  # helpers: logging, env, time
+├── logs/                         # rolling logs of ticks & signals
+└── tests/                        # unit tests for divergence and indicators
+```
+
+# Minimal run instructions
+
+1. Create a Replit Python project and drop the folder.
+2. Add `FINNHUB_API_KEY` to the Replit secrets or `.env`.
+3. Install deps: `pip install -r requirements.txt`
+   Example `requirements.txt`: `websocket-client`, `fastapi`, `uvicorn`, `pandas`, `numpy`, `ta` (optional).
+4. Start: `python src/main.py` (or use `.replit` run: `uvicorn src.api_server:app --host 0.0.0.0 --port 3000`).
+
+---
+
+# Short snippets — Finnhub WebSocket (Python) + pipeline outline
+
+### Finnhub WebSocket client (Python, `websocket-client`)
+
+```python
+# ws_client.py (snippet)
+import os, json, time
+from websocket import create_connection, WebSocketException
+
+FINNHUB_KEY = os.environ['FINNHUB_API_KEY']
+WS_URL = f"wss://ws.finnhub.io?token={FINNHUB_KEY}"
+
+def run_ws(on_message):
+    while True:
+        try:
+            ws = create_connection(WS_URL, timeout=10)
+            # subscribe example for forex pair (tick/candle topics depend on Finnhub)
+            ws.send(json.dumps({"type":"subscribe","symbol":"OANDA:EUR_USD"}))
+            while True:
+                msg = ws.recv()
+                if msg:
+                    data = json.loads(msg)
+                    on_message(data)
+        except WebSocketException as e:
+            print("WS error:", e, "reconnecting in 2s")
+            time.sleep(2)
+        except Exception as e:
+            print("Unexpected:", e)
+            time.sleep(2)
+```
+
+### Real-time processing flow (high-level)
+
+1. `on_message(data)` extracts tick or candle; feeds `data_buffer.append()`.
+2. When a new candle closes (or at interval), compute indicators: `indicators.compute(window)`.
+3. Call `divergence.detect(price_window, indicator_series)`.
+4. If candidate found, call `signal_engine.confirm(candidates, indicators)` — require ≥2 confirmations.
+5. Publish the signal `websocket/broadcast` to frontend and log to disk.
+
+---
+
+# Example confirmation rule (pseudocode)
+
+* Candidate = price makes higher high while RSI makes lower high → potential bearish divergence.
+* Confirm if ANY **two** of:
+
+  * MACD histogram falling for last 3 bars,
+  * EMA9 crosses below EMA21 within last 3 bars,
+  * ADX > 20 and -DI > +DI (trend strength favoring down).
+* If 2/3 true → set `confidence = 0.6 + 0.2*(#confirmations-2)` capped at 0.95.
+
+---
