@@ -29,18 +29,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       ws.current = new WebSocket(wsUrl);
 
       ws.current.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected successfully');
         setIsConnected(true);
         reconnectAttempts.current = 0;
         options.onConnectionChange?.(true);
-
-        // Start ping interval for latency measurement
-        pingInterval.current = setInterval(() => {
-          if (ws.current?.readyState === WebSocket.OPEN) {
-            const start = Date.now();
-            ws.current.send(JSON.stringify({ type: 'ping', timestamp: start }));
-          }
-        }, 30000);
       };
 
       ws.current.onmessage = (event) => {
@@ -82,16 +74,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           pingInterval.current = null;
         }
 
-        // Attempt reconnection with longer delay
-        if (reconnectAttempts.current < maxReconnectAttempts) {
-          const delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts.current), 10000);
-          reconnectAttempts.current++;
-          
-          reconnectTimeout.current = setTimeout(() => {
-            console.log(`Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
-            connect();
-          }, delay);
-        }
+        // Disable auto-reconnection to stop connection loops
+        // if (reconnectAttempts.current < maxReconnectAttempts) {
+        //   const delay = 5000; // Fixed 5 second delay
+        //   reconnectAttempts.current++;
+        //   
+        //   reconnectTimeout.current = setTimeout(() => {
+        //     console.log(`Reconnecting (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+        //     connect();
+        //   }, delay);
+        // }
       };
 
       ws.current.onerror = (error) => {

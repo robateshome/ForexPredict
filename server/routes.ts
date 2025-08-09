@@ -12,11 +12,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
-  // Initialize services - use demo service if no API key available
+  // Initialize services - use demo service for stable development
   const apiKey = process.env.FINNHUB_API_KEY;
   let dataService: ForexService | DemoDataService;
   
-  if (apiKey) {
+  // Force demo mode for stable WebSocket connections during development
+  if (process.env.NODE_ENV === 'development') {
+    dataService = new DemoDataService();
+    console.log('Using demo data service for stable development experience');
+  } else if (apiKey) {
     dataService = new ForexService();
     console.log('Using live Finnhub data service');
   } else {
@@ -77,16 +81,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       data: { status: 'connected', timestamp: new Date().toISOString() }
     }));
     
-    // Handle ping/pong for latency measurement
+    // Keep connection simple for now
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
-        if (message.type === 'ping') {
-          ws.send(JSON.stringify({
-            type: 'pong',
-            data: { timestamp: message.timestamp }
-          }));
-        }
+        console.log('Received WebSocket message:', message.type);
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
       }
