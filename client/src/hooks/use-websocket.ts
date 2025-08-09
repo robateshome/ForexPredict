@@ -22,17 +22,41 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       return;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    // Robust URL construction for Replit environment
+    const isSecure = window.location.protocol === "https:";
+    const protocol = isSecure ? "wss:" : "ws:";
+    
+    // Use the same host and port as the current page
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws`;
+    
+    console.log(`Connecting to WebSocket: ${wsUrl} (Protocol: ${protocol}, Host: ${host})`);
 
     try {
+      // Close any existing connection first
+      if (ws.current) {
+        ws.current.close();
+        ws.current = null;
+      }
+      
       ws.current = new WebSocket(wsUrl);
 
       ws.current.onopen = () => {
-        console.log('WebSocket connected successfully');
+        console.log(`WebSocket connected successfully to ${wsUrl}`);
         setIsConnected(true);
         reconnectAttempts.current = 0;
         options.onConnectionChange?.(true);
+        
+        // Start heartbeat
+        if (pingInterval.current) {
+          clearInterval(pingInterval.current);
+        }
+        pingInterval.current = setInterval(() => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            const pingTime = Date.now();
+            ws.current.send(JSON.stringify({ type: 'ping', timestamp: pingTime }));
+          }
+        }, 30000);
       };
 
       ws.current.onmessage = (event) => {
@@ -64,8 +88,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         }
       };
 
-      ws.current.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.current.onclose = (event) => {
+        console.log(`WebSocket disconnected - Code: ${event.code}, Reason: ${event.reason || 'Unknown'}`);
         setIsConnected(false);
         options.onConnectionChange?.(false);
         
@@ -74,16 +98,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           pingInterval.current = null;
         }
 
-        // Disable auto-reconnection to stop connection loops
-        // if (reconnectAttempts.current < maxReconnectAttempts) {
-        //   const delay = 5000; // Fixed 5 second delay
-        //   reconnectAttempts.current++;
-        //   
-        //   reconnectTimeout.current = setTimeout(() => {
-        //     console.log(`Reconnecting (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
-        //     connect();
-        //   }, delay);
-        // }
+        // Disable auto-reconnection during development to prevent conflicts with HMR
+        console.log('WebSocket connection closed, auto-reconnection disabled in development mode');
       };
 
       ws.current.onerror = (error) => {

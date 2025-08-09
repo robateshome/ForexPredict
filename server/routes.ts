@@ -75,24 +75,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('Client connected to WebSocket');
     clients.add(ws);
     
-    // Send initial data
-    ws.send(JSON.stringify({
-      type: 'connection_established',
-      data: { status: 'connected', timestamp: new Date().toISOString() }
-    }));
+    // Send initial data after a brief delay to ensure connection is stable
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'connection_established',
+          data: { status: 'connected', timestamp: new Date().toISOString() }
+        }));
+      }
+    }, 100);
     
-    // Keep connection simple for now
+    // Handle ping/pong for connection health
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
-        console.log('Received WebSocket message:', message.type);
+        if (message.type === 'ping') {
+          ws.send(JSON.stringify({
+            type: 'pong',
+            data: { timestamp: message.timestamp }
+          }));
+        }
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
       }
     });
     
-    ws.on('close', () => {
-      console.log('Client disconnected from WebSocket');
+    ws.on('close', (code, reason) => {
+      console.log(`Client disconnected from WebSocket - Code: ${code}, Reason: ${reason}`);
       clients.delete(ws);
     });
     
@@ -100,6 +109,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('WebSocket error:', error);
       clients.delete(ws);
     });
+    
+    // Set up keep-alive ping
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      } else {
+        clearInterval(pingInterval);
+      }
+    }, 30000);
+    
+    ws.on('close', () => clearInterval(pingInterval));
   });
   
   // API Routes
