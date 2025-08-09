@@ -97,23 +97,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     
     ws.on('close', (code, reason) => {
-      console.log(`Client disconnected from WebSocket - Code: ${code}, Reason: ${reason}`);
+      console.log(`Client disconnected from WebSocket - Code: ${code}, Reason: ${reason.toString() || 'Unknown'}`);
       clients.delete(ws);
+      clearInterval(pingInterval);
     });
     
     ws.on('error', (error) => {
       console.error('WebSocket error:', error);
       clients.delete(ws);
+      clearInterval(pingInterval);
+      // Gracefully close the connection
+      try {
+        ws.terminate();
+      } catch (e) {
+        // Ignore termination errors
+      }
     });
     
-    // Set up keep-alive ping
+    // Set up keep-alive ping with longer interval
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.ping();
+        try {
+          ws.ping();
+        } catch (error) {
+          console.error('Error sending ping:', error);
+          clearInterval(pingInterval);
+        }
       } else {
         clearInterval(pingInterval);
       }
-    }, 30000);
+    }, 60000); // Increased to 60 seconds
     
     ws.on('close', () => clearInterval(pingInterval));
   });

@@ -18,7 +18,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const maxReconnectAttempts = 5;
 
   const connect = useCallback(() => {
-    if (ws.current?.readyState === WebSocket.OPEN) {
+    if (ws.current?.readyState === WebSocket.OPEN || ws.current?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
@@ -47,7 +47,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         reconnectAttempts.current = 0;
         options.onConnectionChange?.(true);
         
-        // Start heartbeat
+        // Start heartbeat with longer interval to reduce connection churn
         if (pingInterval.current) {
           clearInterval(pingInterval.current);
         }
@@ -56,7 +56,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             const pingTime = Date.now();
             ws.current.send(JSON.stringify({ type: 'ping', timestamp: pingTime }));
           }
-        }, 30000);
+        }, 60000); // Increased to 60 seconds
       };
 
       ws.current.onmessage = (event) => {
@@ -98,8 +98,17 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           pingInterval.current = null;
         }
 
-        // Disable auto-reconnection during development to prevent conflicts with HMR
-        console.log('WebSocket connection closed, auto-reconnection disabled in development mode');
+        // Only reconnect if it wasn't a normal closure and we haven't exceeded max attempts
+        if (event.code !== 1000 && event.code !== 1001 && reconnectAttempts.current < maxReconnectAttempts) {
+          reconnectAttempts.current++;
+          console.log(`Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+          
+          reconnectTimeout.current = setTimeout(() => {
+            connect();
+          }, Math.min(1000 * Math.pow(2, reconnectAttempts.current - 1), 10000)); // Exponential backoff, max 10s
+        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
+          console.log('Max reconnection attempts reached');
+        }
       };
 
       ws.current.onerror = (error) => {
