@@ -56,7 +56,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             const pingTime = Date.now();
             ws.current.send(JSON.stringify({ type: 'ping', timestamp: pingTime }));
           }
-        }, 60000); // Increased to 60 seconds
+        }, 30000); // 30 seconds
       };
 
       ws.current.onmessage = (event) => {

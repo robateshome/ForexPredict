@@ -12,16 +12,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
-  // Initialize services - choose between demo and live ExchangeRate-API
+  // Initialize services with real API integration
   let dataService: ForexService | DemoDataService;
   
-  // Use demo mode in development for stable testing, live mode in production
-  if (process.env.NODE_ENV === 'development') {
-    dataService = new DemoDataService();
-    console.log('Using demo data service for stable development experience');
-  } else {
+  // Use live APIs if available, fallback to demo for development
+  if (process.env.FINNHUB_API_KEY || process.env.EXCHANGERATE_API_KEY) {
     dataService = new ForexService();
-    console.log('Using live ExchangeRate-API service');
+    console.log('Using live API services with real market data');
+  } else {
+    dataService = new DemoDataService();
+    console.log('Using demo data service - add API keys for live data');
   }
   
   // Store connected clients
@@ -99,22 +99,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ws.on('close', (code, reason) => {
       console.log(`Client disconnected from WebSocket - Code: ${code}, Reason: ${reason.toString() || 'Unknown'}`);
       clients.delete(ws);
-      clearInterval(pingInterval);
+      if (pingInterval) clearInterval(pingInterval);
     });
     
     ws.on('error', (error) => {
       console.error('WebSocket error:', error);
       clients.delete(ws);
-      clearInterval(pingInterval);
-      // Gracefully close the connection
-      try {
-        ws.terminate();
-      } catch (e) {
-        // Ignore termination errors
-      }
+      if (pingInterval) clearInterval(pingInterval);
     });
     
-    // Set up keep-alive ping with longer interval
+    // Set up keep-alive ping with longer interval to reduce connection churn
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         try {
@@ -122,13 +116,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
           console.error('Error sending ping:', error);
           clearInterval(pingInterval);
+          clients.delete(ws);
         }
       } else {
         clearInterval(pingInterval);
+        clients.delete(ws);
       }
-    }, 60000); // Increased to 60 seconds
-    
-    ws.on('close', () => clearInterval(pingInterval));
+    }, 45000); // 45 seconds to reduce churn
   });
   
   // API Routes

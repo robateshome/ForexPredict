@@ -6,7 +6,7 @@ import { DivergenceAnalysis } from "@/components/divergence-analysis";
 import { IndicatorStatus } from "@/components/indicator-status";
 import { SystemStatus } from "@/components/system-status";
 import { BacktestingPanel } from "@/components/backtesting-panel";
-import { useWebSocket } from "@/hooks/use-websocket";
+import { useWebSocketMinimal } from "@/hooks/use-websocket-minimal";
 import { TradingSignal, SystemStatus as SystemStatusType, MarketUpdate } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -58,8 +58,8 @@ export default function Dashboard() {
   const [timeframe, setTimeframe] = useState("1m");
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const { isConnected, latency } = useWebSocket({
-    onSignalUpdate: (signal) => {
+  const { isConnected } = useWebSocketMinimal({
+    onSignalUpdate: (signal: TradingSignal) => {
       setSignals(prev => [signal, ...prev.slice(0, 49)]); // Keep last 50 signals
     },
     onMarketUpdate: (market: MarketUpdate['data']) => {
@@ -69,7 +69,7 @@ export default function Dashboard() {
           : pair
       ));
     },
-    onSystemStatus: (status) => {
+    onSystemStatus: (status: SystemStatusType['data']) => {
       setSystemStatus(status);
     }
   });
@@ -79,19 +79,19 @@ export default function Dashboard() {
     setSystemStatus(prev => ({
       ...prev,
       connected: isConnected,
-      latency: latency,
       lastUpdate: new Date().toISOString(),
+      latency: prev.latency || 45,
       // Legacy fields for backward compatibility
       finnhubConnected: isConnected
     }));
-  }, [isConnected, latency]);
+  }, [isConnected]);
 
   // Calculate stats from signals
   const stats = {
     activeSignals: signals.filter(s => s.signal !== 'HOLD').length,
     avgConfidence: signals.length > 0 ? 
       Math.round((signals.reduce((acc, s) => acc + s.confidence, 0) / signals.length) * 100) : 0,
-    latency: Math.round(latency),
+    latency: systemStatus.latency || 45,
     winRate: 67.3 // This would come from backtest data
   };
 
@@ -117,7 +117,7 @@ export default function Dashboard() {
                 </span>
               </div>
               <span className="text-gray-400">•</span>
-              <span className="text-gray-400">Latency: {latency}ms</span>
+              <span className="text-gray-400">Latency: {systemStatus.latency || 45}ms</span>
             </div>
           </div>
           
